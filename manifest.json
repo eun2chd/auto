@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "ERP 자동 출퇴근 시스템",
+  "version": "1.0",
+  "description": "ERP 출퇴근 데이터 관리 및 자동 출퇴근 기능을 제공하는 확장프로그램",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "alarms",
+    "scripting"
+  ],
+  "action": {
+    "default_title": "ERP 자동 출퇴근 시스템",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "host_permissions": [
+    "https://rpxcrfyiqnhucktdxlbh.supabase.co/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["js/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["data/vacation-dates.json"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+
