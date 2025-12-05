@@ -549,6 +549,46 @@ body.popup-mode {
     padding: 8px 12px 0 12px;
 }
 
+/* 사용자별 탭 스타일 */
+.user-tabs-container {
+    margin-bottom: 20px;
+    border-bottom: 2px solid #e5e7eb;
+    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+    border-radius: 8px 8px 0 0;
+    padding: 8px 12px 0 12px;
+}
+
+.user-tabs {
+    display: flex;
+    gap: 0;
+    flex-wrap: wrap;
+}
+
+.user-tab-btn {
+    padding: 10px 20px;
+    background: transparent;
+    color: #64748b;
+    border: none;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    position: relative;
+    top: 2px;
+}
+
+.user-tab-btn:hover {
+    color: #1e40af;
+    background-color: #eff6ff;
+}
+
+.user-tab-btn.active {
+    color: white;
+    background: #3b82f6;
+    border-bottom-color: #3b82f6;
+}
+
 .tabs {
     display: flex;
     gap: 0;

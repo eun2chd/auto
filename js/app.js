@@ -233,7 +233,19 @@ async function refreshAuthToken() {
     }
 }
 
-const USER_ID = 'f2f80b9a-b99c-4d99-96f0-47fad0fc6348';
+// ==================== UUID 배열 설정 ====================
+// 자동 출퇴근할 사용자 UUID 배열 (여기에 UUID를 추가하면 자동 출퇴근됩니다)
+const USER_UUIDS = [
+    'f2f80b9a-b99c-4d99-96f0-47fad0fc6348',
+    '23767df5-4248-4b41-9cb2-d86f1a19a888',
+    // 여기에 새로운 UUID를 추가하세요
+    // 예: '새로운-uuid-1',
+    //     '새로운-uuid-2',
+];
+
+const DEFAULT_USER_ID = 'f2f80b9a-b99c-4d99-96f0-47fad0fc6348';
+const USER_UUIDS_KEY = 'erp_user_uuids'; // UUID 배열 저장 키 (localStorage용, 코드의 USER_UUIDS 배열을 우선 사용)
+const USER_INFO_CACHE_KEY = 'erp_user_info_cache'; // 사용자 정보 캐시
 const STORAGE_KEY = 'erp_attendance_last_fetch_date';
 const DATA_STORAGE_KEY = 'erp_attendance_data';
 const AUTO_ATTENDANCE_KEY = 'erp_auto_attendance_enabled';
@@ -244,6 +256,152 @@ const AUTO_CHECKIN_DATES_KEY = 'erp_auto_checkin_dates';
 const FIXED_CHECK_IN_ADDRESS = '좌수영로, 수영동, 수영구, 부산광역시, 48058, 대한민국';
 const FIXED_CHECK_IN_IP = '218.235.89.145';
 const FIXED_CHECK_IN_LOCATION = '35.1678779,129.1231357';
+
+// ==================== UUID 배열 관리 ====================
+// 
+// 새로운 사용자를 추가하려면:
+// 코드 상단의 USER_UUIDS 배열에 UUID를 추가하세요.
+// 예: const USER_UUIDS = ['uuid1', 'uuid2', 'uuid3'];
+// 추가한 UUID는 자동으로 자동 출퇴근 대상에 포함됩니다.
+
+// UUID 배열 가져오기 (코드의 USER_UUIDS 배열 우선 사용)
+function getUserUuids() {
+    // 코드에 정의된 USER_UUIDS 배열이 있으면 우선 사용
+    if (USER_UUIDS && Array.isArray(USER_UUIDS) && USER_UUIDS.length > 0) {
+        return USER_UUIDS;
+    }
+    
+    // 없으면 localStorage에서 가져오기 (하위 호환성)
+    try {
+        const saved = localStorage.getItem(USER_UUIDS_KEY);
+        if (saved) {
+            const uuids = JSON.parse(saved);
+            if (Array.isArray(uuids) && uuids.length > 0) {
+                return uuids;
+            }
+        }
+        // 저장된 값이 없으면 기본 UUID 배열로 초기화
+        const defaultUuids = [DEFAULT_USER_ID];
+        saveUserUuids(defaultUuids);
+        return defaultUuids;
+    } catch (error) {
+        console.error('UUID 배열 불러오기 오류:', error);
+        return [DEFAULT_USER_ID];
+    }
+}
+
+// UUID 배열 저장
+function saveUserUuids(uuids) {
+    try {
+        localStorage.setItem(USER_UUIDS_KEY, JSON.stringify(uuids));
+        console.log('UUID 배열 저장:', uuids);
+    } catch (error) {
+        console.error('UUID 배열 저장 오류:', error);
+    }
+}
+
+// UUID 추가
+function addUserUuid(uuid) {
+    const uuids = getUserUuids();
+    if (!uuids.includes(uuid)) {
+        uuids.push(uuid);
+        saveUserUuids(uuids);
+        return true;
+    }
+    return false;
+}
+
+// UUID 제거
+function removeUserUuid(uuid) {
+    const uuids = getUserUuids();
+    const filtered = uuids.filter(u => u !== uuid);
+    saveUserUuids(filtered);
+    return filtered.length !== uuids.length;
+}
+
+// 사용자 정보 조회 (캐시 사용)
+// user_info 테이블: id 컬럼 = UUID, full_name 컬럼 = 이름
+async function getUserInfo(uuid) {
+    try {
+        // 캐시 확인
+        const cache = getUserInfoCache();
+        if (cache[uuid]) {
+            return cache[uuid];
+        }
+        
+        // API 호출 - user_info 테이블에서 id 컬럼이 UUID 값
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/user_info?select=id,full_name&id=eq.${uuid}`, {
+            method: 'GET',
+            headers: {
+                'apikey': SUPABASE_API_KEY,
+                'Authorization': getAuthToken(),
+                'Accept': 'application/json',
+                'Accept-Profile': 'public',
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data && data.length > 0) {
+            const userInfo = {
+                id: data[0].id, // UUID 값 (id 컬럼)
+                name: data[0].full_name || '이름 없음', // full_name 컬럼
+                uuid: uuid
+            };
+            
+            // 캐시에 저장
+            cache[uuid] = userInfo;
+            saveUserInfoCache(cache);
+            
+            return userInfo;
+        }
+        
+        // 사용자 정보가 없으면 기본값 반환
+        return {
+            id: null,
+            name: `사용자 (${uuid.substring(0, 8)}...)`,
+            uuid: uuid
+        };
+    } catch (error) {
+        console.error('사용자 정보 조회 오류:', error);
+        // 오류 시 기본값 반환
+        return {
+            id: null,
+            name: `사용자 (${uuid.substring(0, 8)}...)`,
+            uuid: uuid
+        };
+    }
+}
+
+// 사용자 정보 캐시 관리
+function getUserInfoCache() {
+    try {
+        const saved = localStorage.getItem(USER_INFO_CACHE_KEY);
+        return saved ? JSON.parse(saved) : {};
+    } catch (error) {
+        console.error('사용자 정보 캐시 불러오기 오류:', error);
+        return {};
+    }
+}
+
+function saveUserInfoCache(cache) {
+    try {
+        localStorage.setItem(USER_INFO_CACHE_KEY, JSON.stringify(cache));
+    } catch (error) {
+        console.error('사용자 정보 캐시 저장 오류:', error);
+    }
+}
+
+// 모든 사용자 정보 조회
+async function getAllUserInfos() {
+    const uuids = getUserUuids();
+    const userInfos = await Promise.all(uuids.map(uuid => getUserInfo(uuid)));
+    return userInfos;
+}
 
 // 오늘 날짜를 YYYY-MM-DD 형식으로 반환
 function getTodayDateString() {
@@ -337,20 +495,28 @@ function updateAutoStatus(status, message = '') {
     }
 }
 
-// 데이터를 localStorage에 저장
-function saveAttendanceData(data) {
+// 데이터를 localStorage에 저장 (사용자별)
+function saveAttendanceData(data, userId = null) {
+    if (!userId) {
+        userId = currentSelectedUserId || getUserUuids()[0];
+    }
     try {
-        localStorage.setItem(DATA_STORAGE_KEY, JSON.stringify(data));
-        console.log('데이터를 localStorage에 저장했습니다.');
+        const storageKey = `${DATA_STORAGE_KEY}_${userId}`;
+        localStorage.setItem(storageKey, JSON.stringify(data));
+        console.log('데이터를 localStorage에 저장했습니다.', userId);
     } catch (error) {
         console.error('데이터 저장 중 오류:', error);
     }
 }
 
-// localStorage에서 데이터 불러오기
-function loadAttendanceData() {
+// localStorage에서 데이터 불러오기 (사용자별)
+function loadAttendanceData(userId = null) {
+    if (!userId) {
+        userId = currentSelectedUserId || getUserUuids()[0];
+    }
     try {
-        const savedData = localStorage.getItem(DATA_STORAGE_KEY);
+        const storageKey = `${DATA_STORAGE_KEY}_${userId}`;
+        const savedData = localStorage.getItem(storageKey);
         if (savedData) {
             const data = JSON.parse(savedData);
             console.log('localStorage에서 데이터를 불러왔습니다.');
@@ -362,8 +528,16 @@ function loadAttendanceData() {
     return null;
 }
 
-// 출퇴근 데이터를 가져오는 함수
-async function fetchAttendanceData(isAutoFetch = false) {
+// 현재 선택된 사용자 UUID (탭에서 선택)
+let currentSelectedUserId = null;
+
+// 출퇴근 데이터를 가져오는 함수 (특정 사용자 UUID)
+async function fetchAttendanceData(userId = null, isAutoFetch = false) {
+    // userId가 없으면 현재 선택된 사용자 또는 첫 번째 사용자 사용
+    if (!userId) {
+        userId = currentSelectedUserId || getUserUuids()[0];
+    }
+    
     const tbody = document.getElementById('attendance-tbody');
     const fetchBtn = document.getElementById('fetch-btn');
     
@@ -403,12 +577,20 @@ async function fetchAttendanceData(isAutoFetch = false) {
     loadingOverlay.style.opacity = '1';
     
     try {
-        // work_histories 테이블에서 출퇴근 데이터를 가져오는 API 호출
-        const apiUrl = `${SUPABASE_URL}/rest/v1/work_histories?user_id=eq.${USER_ID}&select=*&order=created_at.desc`;
+        // user_info에서 사용자 정보 조회 (id = UUID)
+        const userInfo = await getUserInfo(userId);
+        if (!userInfo.id) {
+            throw new Error('사용자 정보를 찾을 수 없습니다.');
+        }
+        
+        // work_histories 테이블에서 출퇴근 데이터를 가져오는 API 호출 (최근 20개만)
+        // user_id는 UUID 값 (user_info.id와 동일)
+        const apiUrl = `${SUPABASE_URL}/rest/v1/work_histories?user_id=eq.${userInfo.id}&select=*&order=created_at.desc&limit=20`;
         
         console.log('=== API 요청 정보 ===');
         console.log('URL:', apiUrl);
-        console.log('USER_ID:', USER_ID);
+        console.log('USER_ID:', userId);
+        console.log('내부 ID:', userInfo.id);
         
         const response = await fetch(apiUrl, {
             method: 'GET',
@@ -440,14 +622,14 @@ async function fetchAttendanceData(isAutoFetch = false) {
                     // 토큰 갱신 성공하면 재시도
                     console.log('토큰이 자동으로 갱신되었습니다. 재시도합니다.');
                     // 재귀 호출로 재시도
-                    return fetchAttendanceData(isAutoFetch);
+                    return fetchAttendanceData(userId, isAutoFetch);
                 } catch (refreshError) {
                     console.log('토큰 자동 갱신 실패:', refreshError);
                     // 갱신 실패 시 자동 로그인 시도
                     const autoLoginSuccess = await tryAutoLogin();
                     if (autoLoginSuccess) {
                         console.log('자동 로그인 성공. 재시도합니다.');
-                        return fetchAttendanceData(isAutoFetch);
+                        return fetchAttendanceData(userId, isAutoFetch);
                     }
                     
                     // 자동 로그인도 실패하면 모달 표시
@@ -490,8 +672,9 @@ async function fetchAttendanceData(isAutoFetch = false) {
         
         displayAttendanceData(data);
         
-        // 성공적으로 데이터를 가져왔으면 localStorage에 저장
-        saveAttendanceData(data);
+        // 성공적으로 데이터를 가져왔으면 localStorage에 저장 (사용자별로 저장)
+        const storageKey = `${DATA_STORAGE_KEY}_${userId}`;
+        localStorage.setItem(storageKey, JSON.stringify(data));
         saveFetchDate();
         
         // 마지막 새로고침 시간 업데이트
@@ -504,7 +687,7 @@ async function fetchAttendanceData(isAutoFetch = false) {
         
         // 자동 출퇴근이 활성화되어 있고, 오늘 기록이 없으면 자동 출근 체크
         if (isAutoAttendanceEnabled()) {
-            checkTodayAndAutoCheckIn(data);
+            checkTodayAndAutoCheckIn(data, userId);
         }
     } catch (error) {
         console.error('데이터를 가져오는 중 오류 발생:', error);
@@ -591,10 +774,11 @@ function displayAttendanceData(data) {
         const checkOutIP = record.check_out_ip || '-';
         const sequenceNumber = records.length - index; // 역순으로 순번 표시
         
-        // 자동 출근 여부 확인
+        // 자동 출근 여부 확인 (현재 선택된 사용자 기준)
         const recordDate = record.check_in || record.created_at;
         const dateString = recordDate ? recordDate.split('T')[0] : '';
-        const isAutoCheckIn = isAutoCheckInDate(dateString);
+        const currentUuid = currentSelectedUserId || getUserUuids()[0];
+        const isAutoCheckIn = isAutoCheckInDate(dateString, currentUuid);
         
         console.log('포맷팅된 값:');
         console.log('  - 순번:', sequenceNumber);
@@ -675,13 +859,85 @@ function calculateWorkHours(checkIn, checkOut) {
     return `${diffHours}시간 ${diffMinutes}분`;
 }
 
+// 사용자 탭 렌더링
+async function renderUserTabs() {
+    const userTabsContainer = document.getElementById('user-tabs');
+    if (!userTabsContainer) return;
+    
+    const uuids = getUserUuids();
+    const userInfos = await getAllUserInfos();
+    
+    // 첫 번째 사용자를 기본 선택
+    if (uuids.length > 0 && !currentSelectedUserId) {
+        currentSelectedUserId = uuids[0];
+    }
+    
+    userTabsContainer.innerHTML = userInfos.map((userInfo, index) => {
+        const isActive = userInfo.uuid === currentSelectedUserId;
+        return `
+            <button class="user-tab-btn ${isActive ? 'active' : ''}" 
+                    data-uuid="${userInfo.uuid}" 
+                    style="padding: 10px 20px; background: ${isActive ? '#3b82f6' : 'transparent'}; 
+                           color: ${isActive ? 'white' : '#64748b'}; border: none; 
+                           border-bottom: 3px solid ${isActive ? '#3b82f6' : 'transparent'}; 
+                           cursor: pointer; font-size: 0.95rem; font-weight: 600; 
+                           transition: all 0.3s ease; position: relative; top: 2px;">
+                ${userInfo.name}
+            </button>
+        `;
+    }).join('');
+    
+    // 탭 클릭 이벤트
+    userTabsContainer.querySelectorAll('.user-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const uuid = btn.getAttribute('data-uuid');
+            switchUserTab(uuid);
+        });
+    });
+}
+
+// 사용자 탭 전환
+async function switchUserTab(uuid) {
+    currentSelectedUserId = uuid;
+    
+    // 탭 UI 업데이트
+    const userTabs = document.querySelectorAll('.user-tab-btn');
+    userTabs.forEach(tab => {
+        const tabUuid = tab.getAttribute('data-uuid');
+        if (tabUuid === uuid) {
+            tab.classList.add('active');
+            tab.style.background = '#3b82f6';
+            tab.style.color = 'white';
+            tab.style.borderBottomColor = '#3b82f6';
+        } else {
+            tab.classList.remove('active');
+            tab.style.background = 'transparent';
+            tab.style.color = '#64748b';
+            tab.style.borderBottomColor = 'transparent';
+        }
+    });
+    
+    // 저장된 데이터가 있으면 먼저 표시
+    const savedData = loadAttendanceData(uuid);
+    if (savedData) {
+        console.log('저장된 데이터를 먼저 표시합니다.');
+        displayAttendanceData(savedData);
+    } else {
+        // 데이터 가져오기
+        await fetchAttendanceData(uuid);
+    }
+}
+
 // 페이지 로드 시 초기화
 document.addEventListener('DOMContentLoaded', async () => {
     const fetchBtn = document.getElementById('fetch-btn');
     const tbody = document.getElementById('attendance-tbody');
     
     // 버튼 클릭 이벤트 연결 (수동 요청)
-    fetchBtn.addEventListener('click', fetchAttendanceData);
+    fetchBtn.addEventListener('click', () => {
+        const uuid = currentSelectedUserId || getUserUuids()[0];
+        fetchAttendanceData(uuid);
+    });
     
     // 로그인 상태 초기 표시 (확인 중)
     updateLoginStatus();
@@ -697,8 +953,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         await tryAutoLogin();
     }
     
-    // 먼저 저장된 데이터가 있으면 표시
-    const savedData = loadAttendanceData();
+    // 사용자 탭 렌더링
+    await renderUserTabs();
+    
+    // 첫 번째 사용자 데이터 로드
+    const firstUuid = currentSelectedUserId || getUserUuids()[0];
+    const savedData = loadAttendanceData(firstUuid);
     if (savedData) {
         console.log('저장된 데이터를 먼저 표시합니다.');
         displayAttendanceData(savedData);
@@ -707,7 +967,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 자동 요청 확인 및 실행
     if (shouldAutoFetch()) {
         console.log('페이지 로드 시 자동으로 데이터를 가져옵니다.');
-        fetchAttendanceData(true); // 자동 요청임을 표시
+        fetchAttendanceData(firstUuid, true); // 자동 요청임을 표시
     } else {
         // 오늘 이미 요청했으면 상태 표시
         updateAutoStatus('not-needed');
@@ -751,27 +1011,14 @@ function getSeoulTimeAt825() {
     return seoulTime;
 }
 
-// user_info 테이블에서 내부 ID 조회
-async function getUserInfoId() {
+// user_info 테이블에서 UUID 조회 (user_info.id가 UUID 값)
+async function getUserInfoId(uuid) {
     try {
-        const response = await fetch(`${SUPABASE_URL}/rest/v1/user_info?select=id&user_id=eq.${USER_ID}`, {
-            method: 'GET',
-            headers: {
-                'apikey': SUPABASE_API_KEY,
-                'Authorization': getAuthToken(),
-                'Accept': 'application/json',
-                'Accept-Profile': 'public',
-                'Content-Type': 'application/json'
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (data && data.length > 0) {
-            return data[0].id; // 내부 ID (INT)
+        const userInfo = await getUserInfo(uuid);
+        if (userInfo && userInfo.id) {
+            // user_info.id가 UUID 값이므로 그대로 반환
+            // work_histories.user_id도 UUID로 조회
+            return userInfo.id;
         }
         throw new Error('user_info를 찾을 수 없습니다.');
     } catch (error) {
@@ -813,14 +1060,14 @@ async function checkTodayRecord(userInfoId) {
     }
 }
 
-// 자동 출근 INSERT
-async function autoCheckIn() {
+// 자동 출근 INSERT (특정 사용자 UUID)
+async function autoCheckIn(userUuid) {
     try {
-        console.log('=== 자동 출근 시작 ===');
+        console.log('=== 자동 출근 시작 ===', userUuid);
         
-        // 1. user_info에서 내부 ID 조회
-        const userInfoId = await getUserInfoId();
-        console.log('userInfoId:', userInfoId);
+        // 1. user_info에서 UUID 조회 (user_info.id = UUID)
+        const userInfoId = await getUserInfoId(userUuid);
+        console.log('userInfoId (UUID):', userInfoId);
 
         // 2. 오늘 출근 기록 확인
         const hasTodayRecord = await checkTodayRecord(userInfoId);
@@ -904,9 +1151,9 @@ async function autoCheckIn() {
                     
                     const result = await retryResponse.json();
                     console.log('자동 출근 성공 (재시도):', result);
-                    saveAutoCheckInDate(today);
+                    saveAutoCheckInDate(today, userUuid);
                     setTimeout(() => {
-                        fetchAttendanceData();
+                        fetchAttendanceData(userUuid);
                     }, 1000);
                     return true;
                 } catch (refreshError) {
@@ -936,9 +1183,9 @@ async function autoCheckIn() {
                         
                         const result = await retryResponse.json();
                         console.log('자동 출근 성공 (재시도):', result);
-                        saveAutoCheckInDate(today);
+                        saveAutoCheckInDate(today, userUuid);
                         setTimeout(() => {
-                            fetchAttendanceData();
+                            fetchAttendanceData(userUuid);
                         }, 1000);
                         return true;
                     }
@@ -952,12 +1199,12 @@ async function autoCheckIn() {
         const result = await response.json();
         console.log('자동 출근 성공:', result);
         
-        // 자동 출근 완료 날짜 저장 (위에서 선언한 today 변수 재사용)
-        saveAutoCheckInDate(today);
+        // 자동 출근 완료 날짜 저장
+        saveAutoCheckInDate(today, userUuid);
         
         // 데이터 새로고침
         setTimeout(() => {
-            fetchAttendanceData();
+            fetchAttendanceData(userUuid);
         }, 1000);
         
         return true;
@@ -967,10 +1214,11 @@ async function autoCheckIn() {
     }
 }
 
-// 자동 출근 날짜 관리
-function getAutoCheckInDates() {
+// 자동 출근 날짜 관리 (사용자별)
+function getAutoCheckInDates(userUuid = null) {
     try {
-        const saved = localStorage.getItem(AUTO_CHECKIN_DATES_KEY);
+        const key = userUuid ? `${AUTO_CHECKIN_DATES_KEY}_${userUuid}` : AUTO_CHECKIN_DATES_KEY;
+        const saved = localStorage.getItem(key);
         return saved ? JSON.parse(saved) : [];
     } catch (error) {
         console.error('자동 출근 날짜 불러오기 오류:', error);
@@ -978,22 +1226,23 @@ function getAutoCheckInDates() {
     }
 }
 
-function saveAutoCheckInDate(date) {
+function saveAutoCheckInDate(date, userUuid = null) {
     try {
-        const dates = getAutoCheckInDates();
+        const key = userUuid ? `${AUTO_CHECKIN_DATES_KEY}_${userUuid}` : AUTO_CHECKIN_DATES_KEY;
+        const dates = getAutoCheckInDates(userUuid);
         if (!dates.includes(date)) {
             dates.push(date);
             dates.sort();
-            localStorage.setItem(AUTO_CHECKIN_DATES_KEY, JSON.stringify(dates));
-            console.log('자동 출근 날짜 저장:', date);
+            localStorage.setItem(key, JSON.stringify(dates));
+            console.log('자동 출근 날짜 저장:', date, userUuid);
         }
     } catch (error) {
         console.error('자동 출근 날짜 저장 오류:', error);
     }
 }
 
-function isAutoCheckInDate(date) {
-    const dates = getAutoCheckInDates();
+function isAutoCheckInDate(date, userUuid = null) {
+    const dates = getAutoCheckInDates(userUuid);
     return dates.includes(date);
 }
 
@@ -1045,8 +1294,8 @@ function updateAutoAttendanceUI() {
     }
 }
 
-// 데이터에서 오늘 기록 확인 후 자동 출근
-async function checkTodayAndAutoCheckIn(data) {
+// 데이터에서 오늘 기록 확인 후 자동 출근 (특정 사용자)
+async function checkTodayAndAutoCheckIn(data, userUuid = null) {
     if (!isAutoAttendanceEnabled()) {
         return;
     }
@@ -1074,9 +1323,11 @@ async function checkTodayAndAutoCheckIn(data) {
         const vacationDates = getVacationDates();
         if (!vacationDates.includes(today)) {
             console.log('오늘 출근 기록이 없습니다. 자동 출근을 실행합니다.');
-            const success = await autoCheckIn();
+            const uuid = userUuid || currentSelectedUserId || getUserUuids()[0];
+            const success = await autoCheckIn(uuid);
             if (success) {
-                localStorage.setItem('last_auto_checkin_date', today);
+                const lastCheckInKey = userUuid ? `last_auto_checkin_date_${userUuid}` : 'last_auto_checkin_date';
+                localStorage.setItem(lastCheckInKey, today);
             }
         } else {
             console.log('오늘은 연차입니다. 자동 출근을 건너뜁니다.');
@@ -1084,7 +1335,7 @@ async function checkTodayAndAutoCheckIn(data) {
     }
 }
 
-// 자동 출근 체크 및 실행 (8시 25분 체크)
+// 자동 출근 체크 및 실행 (8시 25분 체크) - 모든 사용자에 대해
 async function checkAndAutoCheckIn() {
     if (!isAutoAttendanceEnabled()) {
         return;
@@ -1104,14 +1355,18 @@ async function checkAndAutoCheckIn() {
 
     // 8시 25분 ~ 8시 26분 사이에만 실행
     if (hours === 8 && minutes >= 25 && minutes < 26) {
-        // 오늘 이미 실행했는지 확인
-        const lastAutoCheckIn = localStorage.getItem('last_auto_checkin_date');
-        
-        if (lastAutoCheckIn !== today) {
-            console.log('자동 출근 실행 시도...');
-            const success = await autoCheckIn();
-            if (success) {
-                localStorage.setItem('last_auto_checkin_date', today);
+        // 모든 사용자에 대해 자동 출근 체크
+        const uuids = getUserUuids();
+        for (const uuid of uuids) {
+            const lastCheckInKey = `last_auto_checkin_date_${uuid}`;
+            const lastAutoCheckIn = localStorage.getItem(lastCheckInKey);
+            
+            if (lastAutoCheckIn !== today) {
+                console.log('자동 출근 실행 시도...', uuid);
+                const success = await autoCheckIn(uuid);
+                if (success) {
+                    localStorage.setItem(lastCheckInKey, today);
+                }
             }
         }
     }
